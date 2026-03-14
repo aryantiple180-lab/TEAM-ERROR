@@ -9,7 +9,7 @@ export default function Profile() {
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState<any>({});
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, logout, updateUser } = useAuth();
 
   useEffect(() => {
     if (!user) return;
@@ -33,6 +33,12 @@ export default function Profile() {
     if (!user) return;
     localStorage.setItem('user_profile', JSON.stringify(formData));
     setProfile(formData);
+    
+    // Sync name with the central user identity
+    if (formData.name !== user.displayName) {
+      updateUser({ ...user, displayName: formData.name });
+    }
+    
     setIsEditing(false);
   };
 
@@ -70,10 +76,20 @@ export default function Profile() {
             ) : (
               <h2 className="text-2xl font-bold text-gray-900">{profile.name}</h2>
             )}
-            <p className="text-gray-500">{profile.email}</p>
+            <p className="text-gray-500">{user?.email}</p>
           </div>
 
           <div className="space-y-4">
+            <div className="flex items-center gap-4">
+              <div className="w-10 h-10 bg-indigo-50 text-indigo-500 rounded-full flex items-center justify-center shrink-0">
+                <Mail className="w-5 h-5" />
+              </div>
+              <div className="flex-1">
+                <p className="text-xs text-gray-500 font-medium uppercase tracking-wider">Email</p>
+                <p className="font-medium text-gray-900">{user?.email}</p>
+              </div>
+            </div>
+
             <div className="flex items-center gap-4">
               <div className="w-10 h-10 bg-blue-50 text-blue-500 rounded-full flex items-center justify-center shrink-0">
                 <Phone className="w-5 h-5" />

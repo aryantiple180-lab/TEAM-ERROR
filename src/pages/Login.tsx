@@ -68,7 +68,21 @@ export default function Login() {
       setLoading(true);
       // Mock login
       await new Promise(resolve => setTimeout(resolve, 500));
-      login({ uid: 'mock-uid-123', email, displayName: email.split('@')[0] });
+      
+      let displayName = email.split('@')[0];
+      const storedProfile = localStorage.getItem('user_profile');
+      if (storedProfile) {
+        try {
+          const profile = JSON.parse(storedProfile);
+          if (profile.email === email && profile.name) {
+            displayName = profile.name;
+          }
+        } catch (e) {
+          console.error('Failed to parse profile', e);
+        }
+      }
+
+      login({ uid: 'mock-uid-123', email, displayName });
       navigate('/language');
     } catch (err: any) {
       setError(err.message || 'Failed to log in');
@@ -83,7 +97,22 @@ export default function Login() {
       setLoading(true);
       // Mock Google login
       await new Promise(resolve => setTimeout(resolve, 500));
-      login({ uid: 'mock-google-uid', email: 'googleuser@example.com', displayName: 'Google User' });
+      
+      const email = 'googleuser@example.com';
+      let displayName = 'Google User';
+      const storedProfile = localStorage.getItem('user_profile');
+      if (storedProfile) {
+        try {
+          const profile = JSON.parse(storedProfile);
+          if (profile.email === email && profile.name) {
+            displayName = profile.name;
+          }
+        } catch (e) {
+          console.error('Failed to parse profile', e);
+        }
+      }
+
+      login({ uid: 'mock-google-uid', email, displayName });
       navigate('/language');
     } catch (err: any) {
       setError(err.message || 'Failed to log in with Google');

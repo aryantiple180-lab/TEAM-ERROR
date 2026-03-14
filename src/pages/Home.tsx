@@ -164,6 +164,7 @@ export default function Home() {
           <div>
             <p className="text-emerald-100 text-sm font-medium">{greeting},</p>
             <h1 className="text-2xl font-bold">{user?.displayName || 'User'}</h1>
+            <p className="text-emerald-50 text-xs mt-1 opacity-90">{user?.email}</p>
           </div>
           <div className="flex gap-2">
             <button 
