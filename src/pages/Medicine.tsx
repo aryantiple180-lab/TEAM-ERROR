@@ -1,18 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import BottomNav from '../components/BottomNav';
-import { Pill, Plus, Calendar, Clock, CheckCircle2, Circle } from 'lucide-react';
+import { Pill, Plus, Calendar, Clock, CheckCircle2, Trash2 } from 'lucide-react';
 import { format } from 'date-fns';
 
 export default function Medicine() {
   const [medicines, setMedicines] = useState<any[]>([]);
   const [showAdd, setShowAdd] = useState(false);
-  const [newMed, setNewMed] = useState({ name: '', dosage: '', time: '', frequency: 'daily' });
+  const [newMed, setNewMed] = useState({ name: '', dosage: '', time: '', frequency: 'daily', startDate: '', endDate: '' });
   const { user } = useAuth();
 
   useEffect(() => {
     if (!user) return;
-    const storedMeds = localStorage.getItem(`medicines_${user.uid}`);
+    const storedMeds = localStorage.getItem(`reminders_${user.uid}`);
     if (storedMeds) {
       setMedicines(JSON.parse(storedMeds));
     }
@@ -27,17 +27,26 @@ export default function Medicine() {
       userId: user.uid,
       name: newMed.name,
       dosage: newMed.dosage,
-      reminderTime: newMed.time,
+      time: newMed.time,
       frequency: newMed.frequency,
+      startDate: newMed.startDate,
+      endDate: newMed.endDate,
       createdAt: new Date().toISOString()
     };
 
     const updatedMeds = [...medicines, newMedicine];
     setMedicines(updatedMeds);
-    localStorage.setItem(`medicines_${user.uid}`, JSON.stringify(updatedMeds));
+    localStorage.setItem(`reminders_${user.uid}`, JSON.stringify(updatedMeds));
     
     setShowAdd(false);
-    setNewMed({ name: '', dosage: '', time: '', frequency: 'daily' });
+    setNewMed({ name: '', dosage: '', time: '', frequency: 'daily', startDate: '', endDate: '' });
+  };
+
+  const handleDelete = (id: string) => {
+    if (!user) return;
+    const updatedMeds = medicines.filter(med => med.id !== id);
+    setMedicines(updatedMeds);
+    localStorage.setItem(`reminders_${user.uid}`, JSON.stringify(updatedMeds));
   };
 
   return (
@@ -69,6 +78,16 @@ export default function Medicine() {
                 <option value="weekly">Weekly</option>
                 <option value="as-needed">As Needed</option>
               </select>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Start Date</label>
+                  <input type="date" required value={newMed.startDate} onChange={e => setNewMed({...newMed, startDate: e.target.value})} className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-emerald-500 outline-none" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">End Date</label>
+                  <input type="date" required value={newMed.endDate} onChange={e => setNewMed({...newMed, endDate: e.target.value})} className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-emerald-500 outline-none" />
+                </div>
+              </div>
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => setShowAdd(false)} className="flex-1 py-3 text-gray-600 font-medium hover:bg-gray-50 rounded-xl">Cancel</button>
                 <button type="submit" className="flex-1 py-3 bg-emerald-600 text-white font-medium rounded-xl hover:bg-emerald-700 shadow-lg shadow-emerald-200">Save</button>
@@ -95,9 +114,12 @@ export default function Medicine() {
                 <p className="text-sm text-gray-500">{med.dosage} • {med.frequency}</p>
               </div>
               <div className="text-right flex flex-col items-end gap-2">
-                <span className="text-emerald-600 font-bold bg-emerald-50 px-3 py-1 rounded-lg text-sm">{med.reminderTime}</span>
-                <button className="text-gray-300 hover:text-emerald-500 transition-colors">
-                  <Circle className="w-6 h-6" />
+                <span className="text-emerald-600 font-bold bg-emerald-50 px-3 py-1 rounded-lg text-sm">{med.time}</span>
+                <button 
+                  onClick={() => handleDelete(med.id)}
+                  className="text-gray-300 hover:text-red-500 transition-colors"
+                >
+                  <Trash2 className="w-5 h-5" />
                 </button>
               </div>
             </div>

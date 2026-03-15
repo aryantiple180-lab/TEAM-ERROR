@@ -18,6 +18,8 @@ import Order from './pages/Order';
 import Chatbot from './pages/Chatbot';
 import Profile from './pages/Profile';
 
+import Settings from './pages/Settings';
+
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, loading } = useAuth();
   if (loading) return <div>Loading...</div>;
@@ -50,6 +52,7 @@ const AppRoutes = () => {
       <Route path="/order" element={<ProtectedRoute><Order /></ProtectedRoute>} />
       <Route path="/chatbot" element={<ProtectedRoute><Chatbot /></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+      <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
     </Routes>
   );
 };

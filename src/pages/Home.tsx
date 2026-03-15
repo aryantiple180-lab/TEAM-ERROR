@@ -3,13 +3,15 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import BottomNav from '../components/BottomNav';
-import { Pill, Activity, MapPin, ShoppingBag, Lightbulb, MessageSquare, Bell, Plus, X } from 'lucide-react';
+import { Pill, Activity, MapPin, ShoppingBag, Lightbulb, MessageSquare, Bell, Settings, X } from 'lucide-react';
 
 interface Reminder {
   id: string;
   name: string;
   dosage: string;
   time: string; // HH:mm format
+  startDate?: string;
+  endDate?: string;
 }
 
 export default function Home() {
@@ -17,8 +19,13 @@ export default function Home() {
   const { t } = useLanguage();
   const [greeting, setGreeting] = useState('');
   const [reminders, setReminders] = useState<Reminder[]>([]);
-  const [showReminderModal, setShowReminderModal] = useState(false);
-  const [newReminder, setNewReminder] = useState({ name: '', dosage: '', time: '' });
+  const [showNotificationSettings, setShowNotificationSettings] = useState(false);
+  const [notificationSettings, setNotificationSettings] = useState({
+    ringtone: 'https://actions.google.com/sounds/v1/alarms/beep_short.ogg',
+    volume: 1.0
+  });
+  const [activeAlarm, setActiveAlarm] = useState<{name: string, dosage: string, audio: HTMLAudioElement} | null>(null);
+  const [countdown, setCountdown] = useState<string>('');
   const lastNotifiedMinute = useRef<string>('');
 
   const features = [
@@ -52,14 +59,57 @@ export default function Home() {
     return () => clearInterval(interval);
   }, []);
 
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+
   useEffect(() => {
     if (user) {
       const stored = localStorage.getItem(`reminders_${user.uid}`);
       if (stored) {
         setReminders(JSON.parse(stored));
       }
+      const storedSettings = localStorage.getItem(`notification_settings_${user.uid}`);
+      if (storedSettings) {
+        setNotificationSettings(JSON.parse(storedSettings));
+      }
+      const storedNotif = localStorage.getItem(`notifications_enabled_${user.uid}`);
+      if (storedNotif !== null) {
+        setNotificationsEnabled(JSON.parse(storedNotif));
+      }
     }
   }, [user]);
+
+  // Find the next upcoming reminder
+  const getNextReminder = () => {
+    if (reminders.length === 0) return null;
+    
+    const now = new Date();
+    const currentIstTime = now.toLocaleTimeString('en-US', { 
+      timeZone: 'Asia/Kolkata', 
+      hour12: false, 
+      hour: '2-digit', 
+      minute: '2-digit' 
+    });
+    
+    const todayStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+
+    // Filter reminders that are active today
+    const activeReminders = reminders.filter(r => {
+      if (r.startDate && r.startDate > todayStr) return false;
+      if (r.endDate && r.endDate < todayStr) return false;
+      // For weekly, we could check day of week, but let's keep it simple for now or implement if needed
+      return true;
+    });
+
+    if (activeReminders.length === 0) return null;
+
+    const upcoming = activeReminders.filter(r => r.time >= currentIstTime).sort((a, b) => a.time.localeCompare(b.time));
+    if (upcoming.length > 0) return upcoming[0];
+    
+    // If no upcoming today, return the first one tomorrow
+    return [...activeReminders].sort((a, b) => a.time.localeCompare(b.time))[0];
+  };
+
+  const nextReminder = getNextReminder();
 
   useEffect(() => {
     if ('Notification' in window && Notification.permission !== 'granted' && Notification.permission !== 'denied') {
@@ -75,19 +125,70 @@ export default function Home() {
         minute: '2-digit' 
       });
       
+      // Update countdown
+      if (nextReminder) {
+        const istNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+        const reminderDate = new Date(istNow);
+        const [remHour, remMin] = nextReminder.time.split(':').map(Number);
+        reminderDate.setHours(remHour, remMin, 0, 0);
+        
+        if (reminderDate < istNow) {
+          reminderDate.setDate(reminderDate.getDate() + 1);
+        }
+        
+        const diffMs = reminderDate.getTime() - istNow.getTime();
+        if (diffMs <= 0) {
+          setCountdown('0 minutes 0 seconds');
+        } else {
+          const diffSecs = Math.floor(diffMs / 1000);
+          const hours = Math.floor(diffSecs / 3600);
+          const minutes = Math.floor((diffSecs % 3600) / 60);
+          const seconds = diffSecs % 60;
+          
+          let countdownStr = '';
+          if (hours > 0) countdownStr += `${hours} hours `;
+          countdownStr += `${minutes} minutes ${seconds} seconds`;
+          setCountdown(countdownStr);
+        }
+      } else {
+        setCountdown('');
+      }
+
       if (istTimeStr !== lastNotifiedMinute.current) {
+        const todayStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+        
         reminders.forEach(reminder => {
+          // Check if reminder is active today
+          if (reminder.startDate && reminder.startDate > todayStr) return;
+          if (reminder.endDate && reminder.endDate < todayStr) return;
+
           if (reminder.time === istTimeStr) {
             // Play sound
-            const audio = new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg');
-            audio.play().catch(e => console.log('Audio play failed', e));
+            if (notificationsEnabled) {
+              const audio = new Audio(notificationSettings.ringtone);
+              audio.volume = notificationSettings.volume;
+              audio.loop = true;
+              audio.play().catch(e => console.log('Audio play failed', e));
 
-            // Show notification
-            if ('Notification' in window && Notification.permission === 'granted') {
-              new Notification('Medicine Reminder', {
-                body: `Time to take your medicine: ${reminder.name} ${reminder.dosage ? `(${reminder.dosage})` : ''}`,
-                icon: '/vite.svg'
-              });
+              // Stop audio after 25 seconds automatically
+              setTimeout(() => {
+                audio.pause();
+                audio.currentTime = 0;
+                setActiveAlarm(prev => prev?.audio === audio ? null : prev);
+              }, 25000);
+
+              // Show notification
+              if ('Notification' in window && Notification.permission === 'granted') {
+                new Notification('Medicine Reminder', {
+                  body: `Time to take your medicine: ${reminder.name} ${reminder.dosage ? `(${reminder.dosage})` : ''}`,
+                  icon: '/vite.svg'
+                });
+              }
+              
+              setActiveAlarm({ name: reminder.name, dosage: reminder.dosage, audio });
+            } else {
+              // Just show the modal without sound if notifications are disabled
+              setActiveAlarm({ name: reminder.name, dosage: reminder.dosage, audio: new Audio() });
             }
           }
         });
@@ -96,56 +197,11 @@ export default function Home() {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [reminders]);
+  }, [reminders, notificationSettings, nextReminder, notificationsEnabled]);
 
-  const handleAddReminder = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user || !newReminder.name || !newReminder.time) return;
 
-    const reminder: Reminder = {
-      id: Date.now().toString(),
-      ...newReminder
-    };
 
-    const updatedReminders = [...reminders, reminder];
-    setReminders(updatedReminders);
-    localStorage.setItem(`reminders_${user.uid}`, JSON.stringify(updatedReminders));
-    
-    setNewReminder({ name: '', dosage: '', time: '' });
-    setShowReminderModal(false);
-    
-    if ('Notification' in window && Notification.permission !== 'granted') {
-      Notification.requestPermission();
-    }
-  };
 
-  const deleteReminder = (id: string) => {
-    if (!user) return;
-    const updatedReminders = reminders.filter(r => r.id !== id);
-    setReminders(updatedReminders);
-    localStorage.setItem(`reminders_${user.uid}`, JSON.stringify(updatedReminders));
-  };
-
-  // Find the next upcoming reminder
-  const getNextReminder = () => {
-    if (reminders.length === 0) return null;
-    
-    const now = new Date();
-    const currentIstTime = now.toLocaleTimeString('en-US', { 
-      timeZone: 'Asia/Kolkata', 
-      hour12: false, 
-      hour: '2-digit', 
-      minute: '2-digit' 
-    });
-
-    const upcoming = reminders.filter(r => r.time >= currentIstTime).sort((a, b) => a.time.localeCompare(b.time));
-    if (upcoming.length > 0) return upcoming[0];
-    
-    // If no upcoming today, return the first one tomorrow
-    return [...reminders].sort((a, b) => a.time.localeCompare(b.time))[0];
-  };
-
-  const nextReminder = getNextReminder();
 
   const formatTime12Hour = (time24: string) => {
     const [hourStr, minute] = time24.split(':');
@@ -156,8 +212,36 @@ export default function Home() {
     return `${hour.toString().padStart(2, '0')}:${minute} ${ampm}`;
   };
 
+  const stopAlarm = () => {
+    if (activeAlarm?.audio) {
+      activeAlarm.audio.pause();
+      activeAlarm.audio.currentTime = 0;
+    }
+    setActiveAlarm(null);
+  };
+
   return (
     <div className="flex-1 flex flex-col bg-gray-50 h-full relative">
+      {/* Active Alarm Modal */}
+      {activeAlarm && (
+        <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl w-full max-w-sm overflow-hidden shadow-2xl animate-bounce-slight text-center p-8">
+            <div className="w-20 h-20 bg-red-100 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6 animate-pulse">
+              <Bell className="w-10 h-10" />
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">Time for Medicine!</h2>
+            <p className="text-xl font-semibold text-emerald-600 mb-1">{activeAlarm.name}</p>
+            {activeAlarm.dosage && <p className="text-gray-500 mb-8">{activeAlarm.dosage}</p>}
+            
+            <button 
+              onClick={stopAlarm}
+              className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-bold text-lg hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-200"
+            >
+              Stop Alarm
+            </button>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div className="bg-emerald-600 text-white p-6 pb-8 rounded-b-[32px] shadow-lg relative z-10">
         <div className="flex justify-between items-center mb-6">
@@ -168,36 +252,47 @@ export default function Home() {
           </div>
           <div className="flex gap-2">
             <button 
-              onClick={() => setShowReminderModal(true)}
+              onClick={() => setShowNotificationSettings(true)}
               className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center relative hover:bg-white/30 transition-colors"
-              title="Reminder Settings"
+              title="Notification Settings"
             >
-              <Plus className="w-5 h-5" />
-            </button>
-            <button className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center relative hover:bg-white/30 transition-colors">
               <Bell className="w-5 h-5" />
               <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border-2 border-emerald-600"></span>
             </button>
+            <Link 
+              to="/settings"
+              className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center relative hover:bg-white/30 transition-colors"
+              title="Settings"
+            >
+              <Settings className="w-5 h-5" />
+            </Link>
           </div>
         </div>
         
         {/* Medicine Reminder Widget (Only shows if there are reminders) */}
         {nextReminder && (
-          <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center">
-                <Pill className="w-6 h-6 text-white" />
+          <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-4 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center">
+                  <Pill className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                  <p className="text-sm text-emerald-50 font-medium">Next Medicine</p>
+                  <p className="text-lg font-bold">{nextReminder.name}</p>
+                  {nextReminder.dosage && <p className="text-xs text-emerald-100">{nextReminder.dosage}</p>}
+                </div>
               </div>
-              <div>
-                <p className="text-sm text-emerald-50 font-medium">Next Medicine</p>
-                <p className="text-lg font-bold">{nextReminder.name}</p>
-                {nextReminder.dosage && <p className="text-xs text-emerald-100">{nextReminder.dosage}</p>}
+              <div className="text-right">
+                <p className="text-sm text-emerald-50 font-medium">Time</p>
+                <p className="text-lg font-bold">{formatTime12Hour(nextReminder.time)}</p>
               </div>
             </div>
-            <div className="text-right">
-              <p className="text-sm text-emerald-50 font-medium">Time</p>
-              <p className="text-lg font-bold">{formatTime12Hour(nextReminder.time)}</p>
-            </div>
+            {countdown && (
+              <div className="bg-black/20 rounded-lg p-2 text-center">
+                <p className="text-sm font-medium text-emerald-50">Next Reminder In: {countdown}</p>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -235,82 +330,107 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Reminder Settings Modal */}
-      {showReminderModal && (
+
+
+      {/* Notification Settings Modal */}
+      {showNotificationSettings && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-xl flex flex-col max-h-[90vh]">
-            <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-emerald-50">
-              <h2 className="text-lg font-bold text-emerald-900">Reminder Settings</h2>
-              <button onClick={() => setShowReminderModal(false)} className="p-2 text-emerald-600 hover:bg-emerald-100 rounded-full transition-colors">
+          <div className="bg-white rounded-3xl w-full max-w-md overflow-hidden shadow-xl">
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-emerald-50">
+              <h2 className="text-xl font-bold text-emerald-900">Notification Settings</h2>
+              <button onClick={() => setShowNotificationSettings(false)} className="p-2 hover:bg-emerald-100 rounded-full transition-colors text-emerald-600">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            
-            <div className="p-6 overflow-y-auto flex-1">
-              <form onSubmit={handleAddReminder} className="space-y-4 mb-8">
-                <h3 className="font-semibold text-gray-900">Add New Reminder</h3>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Medicine Name</label>
-                  <input
-                    type="text"
-                    required
-                    value={newReminder.name}
-                    onChange={e => setNewReminder({...newReminder, name: e.target.value})}
-                    className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-emerald-500 outline-none"
-                    placeholder="e.g. Paracetamol"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Dosage</label>
-                    <input
-                      type="text"
-                      value={newReminder.dosage}
-                      onChange={e => setNewReminder({...newReminder, dosage: e.target.value})}
-                      className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-emerald-500 outline-none"
-                      placeholder="e.g. 1 Pill"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Time</label>
-                    <input
-                      type="time"
-                      required
-                      value={newReminder.time}
-                      onChange={e => setNewReminder({...newReminder, time: e.target.value})}
-                      className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-emerald-500 outline-none"
-                    />
-                  </div>
-                </div>
-                <button type="submit" className="w-full bg-emerald-600 text-white py-2 rounded-xl font-semibold hover:bg-emerald-700 transition-colors">
-                  Add Reminder
-                </button>
-              </form>
-
+            <div className="p-6 space-y-6">
               <div>
-                <h3 className="font-semibold text-gray-900 mb-3">Your Reminders</h3>
-                {reminders.length === 0 ? (
-                  <p className="text-sm text-gray-500 italic">No reminders set.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {reminders.map(reminder => (
-                      <div key={reminder.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-xl border border-gray-100">
-                        <div>
-                          <p className="font-medium text-gray-900">{reminder.name}</p>
-                          <p className="text-xs text-gray-500">{reminder.dosage} • {formatTime12Hour(reminder.time)}</p>
-                        </div>
-                        <button 
-                          onClick={() => deleteReminder(reminder.id)}
-                          className="p-2 text-red-500 hover:bg-red-50 rounded-full transition-colors"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Reminder Ringtone Settings</label>
+                <select 
+                  value={notificationSettings.ringtone.startsWith('blob:') ? 'custom' : notificationSettings.ringtone}
+                  onChange={(e) => {
+                    if (e.target.value === 'custom') {
+                      document.getElementById('custom-ringtone-upload')?.click();
+                    } else {
+                      const newSettings = { ...notificationSettings, ringtone: e.target.value };
+                      setNotificationSettings(newSettings);
+                      if (user) localStorage.setItem(`notification_settings_${user.uid}`, JSON.stringify(newSettings));
+                    }
+                  }}
+                  className="w-full border border-gray-300 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="https://actions.google.com/sounds/v1/alarms/beep_short.ogg">Default Beep</option>
+                  <option value="https://actions.google.com/sounds/v1/alarms/digital_watch_alarm_long.ogg">Digital Chime</option>
+                  <option value="https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg">Alarm Clock</option>
+                  <option value="https://actions.google.com/sounds/v1/alarms/dosimeter_alarm.ogg">Gentle Alert</option>
+                  <option value="custom">Choose from device...</option>
+                </select>
+                {notificationSettings.ringtone.startsWith('blob:') && (
+                  <p className="text-xs text-emerald-600 mt-2 font-medium">Custom ringtone selected</p>
                 )}
+                <input 
+                  type="file" 
+                  id="custom-ringtone-upload" 
+                  accept="audio/*" 
+                  className="hidden" 
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const url = URL.createObjectURL(file);
+                      const newSettings = { ...notificationSettings, ringtone: url };
+                      setNotificationSettings(newSettings);
+                      if (user) localStorage.setItem(`notification_settings_${user.uid}`, JSON.stringify(newSettings));
+                    }
+                  }}
+                />
               </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Volume: {Math.round(notificationSettings.volume * 100)}%</label>
+                <input 
+                  type="range" 
+                  min="0" max="1" step="0.1" 
+                  value={notificationSettings.volume}
+                  onChange={(e) => {
+                    const newSettings = { ...notificationSettings, volume: parseFloat(e.target.value) };
+                    setNotificationSettings(newSettings);
+                    if (user) localStorage.setItem(`notification_settings_${user.uid}`, JSON.stringify(newSettings));
+                  }}
+                  className="w-full accent-emerald-600"
+                />
+              </div>
+
+              <button 
+                onClick={() => {
+                  const audio = new Audio(notificationSettings.ringtone);
+                  audio.volume = notificationSettings.volume;
+                  audio.play().catch(e => console.log('Preview failed', e));
+                }}
+                className="w-full bg-emerald-100 text-emerald-700 font-bold py-3 rounded-xl hover:bg-emerald-200 transition-colors"
+              >
+                Preview Sound
+              </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Active Alarm Modal */}
+      {activeAlarm && (
+        <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl w-full max-w-sm overflow-hidden text-center p-8 shadow-2xl">
+            <div className="w-20 h-20 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-6">
+              <Bell className="w-10 h-10 animate-pulse" />
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">Time to take your medicine</h2>
+            <p className="text-lg text-emerald-600 font-bold mb-1">{activeAlarm.name}</p>
+            {activeAlarm.dosage && <p className="text-gray-500 mb-8">{activeAlarm.dosage}</p>}
+            
+            <button 
+              onClick={() => setActiveAlarm(null)}
+              className="w-full bg-emerald-600 text-white font-bold py-4 rounded-xl hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-200"
+            >
+              I've taken it
+            </button>
           </div>
         </div>
       )}
